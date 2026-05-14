@@ -72,6 +72,12 @@ class Simulation:
             "capital_tax_revenue": capital_tax_revenue,
             "total_tax_revenue": total_revenue,
             "total_transfers": float(transfers.sum()),
+            **self._income_diagnostics(
+                self.labour_income,
+                disposable_income,
+                capital_income,
+                labour_tax,
+            ),
             **self._return_diagnostics(wealth, realised_returns),
         }
 
@@ -112,6 +118,42 @@ class Simulation:
             )
 
         return diagnostics
+
+    def _income_diagnostics(
+        self,
+        labour_income: np.ndarray,
+        disposable_income: np.ndarray,
+        capital_income: np.ndarray,
+        labour_tax: np.ndarray,
+    ) -> dict[str, float]:
+        diagnostics = {
+            "pre_tax_labour_income_gini": gini(labour_income),
+            "disposable_income_gini": gini(disposable_income),
+            "capital_income_gini": gini(capital_income),
+            "capital_income_share": self._capital_income_share(labour_income, capital_income),
+        }
+
+        order = np.argsort(labour_income)
+        income_deciles = np.array_split(order, 10)
+        for decile, indices in enumerate(income_deciles, start=1):
+            decile_income = labour_income[indices].sum()
+            decile_tax = labour_tax[indices].sum()
+            diagnostics[f"avg_tax_rate_income_decile_{decile}"] = float(
+                decile_tax / decile_income if decile_income > 0.0 else 0.0
+            )
+
+        return diagnostics
+
+    def _capital_income_share(
+        self,
+        labour_income: np.ndarray,
+        capital_income: np.ndarray,
+    ) -> float:
+        total_capital_income = capital_income.sum()
+        total_income = labour_income.sum() + total_capital_income
+        if total_income <= 0.0:
+            return 0.0
+        return float(total_capital_income / total_income)
 
     def _labour_tax(self, income: np.ndarray) -> np.ndarray:
         if self.tax_system == "flat":

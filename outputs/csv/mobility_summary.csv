@@ -1,0 +1,5 @@
+scenario,shorrocks_index,rank_correlation,top_20_persistence,bottom_40_to_top_40
+flat,0.7545000000000001,0.6398768798067688,0.705,0.1775
+swedish_low_progressivity,0.75175,0.643269095292691,0.711,0.1765
+swedish_baseline_progressivity,0.7464999999999999,0.6505921459459215,0.7255,0.16875
+swedish_high_progressivity,0.739375,0.6587643244316432,0.738,0.1615
