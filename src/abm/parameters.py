@@ -28,3 +28,9 @@ class ModelParams:
     earned_income_max_credit: float = 35_000.0
     earned_income_phaseout_start: float = 500_000.0
     earned_income_phaseout_rate: float = 0.08
+    universal_transfer_share: float = 0.50
+    safety_floor: float = 220_000.0
+    safety_floor_replacement_rate: float = 0.60
+    unemployment_probability: float = 0.03
+    unemployment_replacement_rate: float = 0.70
+    unemployment_benefit_cap: float = 260_000.0

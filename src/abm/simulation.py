@@ -11,7 +11,7 @@ from abm.parameters import ModelParams
 from abm.returns import RETURN_CLASS_NAMES, draw_capital_returns
 from abm.swedish_tax import swedish_income_tax
 from abm.tax import flat_tax, progressive_tax
-from abm.transfers import lump_sum_transfers
+from abm.transfers import total_transfers
 
 TaxFunction = Callable[[np.ndarray], np.ndarray]
 
@@ -50,16 +50,30 @@ class Simulation:
         self._update_labour_income()
         realised_returns = self._draw_capital_returns()
         capital_income = wealth * realised_returns
-        labour_tax = self._labour_tax(self.labour_income)
+        unemployed = self._draw_unemployment()
+        potential_labour_income = self.labour_income
+        labour_income = np.where(unemployed, 0.0, potential_labour_income)
+        labour_tax = self._labour_tax(labour_income)
         capital_tax = np.maximum(capital_income, 0.0) * self.params.capital_tax_rate
         after_tax_capital_income = capital_income - capital_tax
         total_tax = labour_tax + capital_tax
         labour_tax_revenue = float(labour_tax.sum())
         capital_tax_revenue = float(capital_tax.sum())
         total_revenue = float(total_tax.sum())
-        transfers = lump_sum_transfers(total_revenue, self.params.N)
+        income_after_labour_tax = labour_income - labour_tax
+        transfers = total_transfers(
+            labour_tax_revenue,
+            income_after_labour_tax,
+            potential_labour_income,
+            unemployed,
+            self.params.universal_transfer_share,
+            self.params.safety_floor,
+            self.params.safety_floor_replacement_rate,
+            self.params.unemployment_replacement_rate,
+            self.params.unemployment_benefit_cap,
+        )
 
-        disposable_income = self.labour_income - labour_tax + transfers
+        disposable_income = income_after_labour_tax + transfers.total
         saving = np.maximum(0.0, saving_rate * (disposable_income - self.params.min_consumption))
         self.agents["wealth"] = np.maximum(wealth + after_tax_capital_income + saving, 0.0)
 
@@ -71,9 +85,20 @@ class Simulation:
             "labour_tax_revenue": labour_tax_revenue,
             "capital_tax_revenue": capital_tax_revenue,
             "total_tax_revenue": total_revenue,
-            "total_transfers": float(transfers.sum()),
+            "total_transfers": float(transfers.total.sum()),
+            "universal_transfer_spending": float(transfers.universal.sum()),
+            "means_tested_transfer_spending": float(transfers.means_tested.sum()),
+            "unemployment_transfer_spending": float(transfers.unemployment.sum()),
+            "transfer_spending_share": (
+                float(transfers.total.sum()) / labour_tax_revenue
+                if labour_tax_revenue > 0.0
+                else 0.0
+            ),
+            "means_tested_recipient_count": float(transfers.means_tested_recipients.sum()),
+            "means_tested_recipient_share": float(transfers.means_tested_recipients.mean()),
+            "unemployment_rate": float(unemployed.mean()),
             **self._income_diagnostics(
-                self.labour_income,
+                labour_income,
                 disposable_income,
                 capital_income,
                 labour_tax,
@@ -95,6 +120,9 @@ class Simulation:
 
     def _draw_capital_returns(self) -> np.ndarray:
         return draw_capital_returns(self.agents["return_class"], self.params, self.rng)
+
+    def _draw_unemployment(self) -> np.ndarray:
+        return self.rng.random(self.params.N) < self.params.unemployment_probability
 
     def _return_diagnostics(
         self,

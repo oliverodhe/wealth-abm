@@ -81,6 +81,10 @@ def final_summary_row(
         "final_disposable_income_gini": final["disposable_income_gini"],
         "final_capital_income_gini": final["capital_income_gini"],
         "final_capital_income_share": final["capital_income_share"],
+        "final_transfer_spending_share": final["transfer_spending_share"],
+        "final_means_tested_recipient_count": final["means_tested_recipient_count"],
+        "final_means_tested_recipient_share": final["means_tested_recipient_share"],
+        "final_unemployment_rate": final["unemployment_rate"],
         "final_top_10_share": final["top_10_share"],
         "final_top_1_share": final["top_1_share"],
         "shorrocks_index": mobility["shorrocks_index"],
@@ -170,6 +174,9 @@ def main() -> None:
             print(f"  Final pre-tax labour-income Gini: {final['pre_tax_labour_income_gini']:.3f}")
             print(f"  Final disposable-income Gini: {final['disposable_income_gini']:.3f}")
             print(f"  Final capital-income share: {final['capital_income_share']:.3f}")
+            print(f"  Final transfer spending share: {final['transfer_spending_share']:.3f}")
+            print(f"  Final means-tested recipient share: {final['means_tested_recipient_share']:.3f}")
+            print(f"  Final unemployment rate: {final['unemployment_rate']:.3f}")
             print(f"  Final top 10% share: {final['top_10_share']:.3f}")
             print(f"  Final top 1% share: {final['top_1_share']:.3f}")
             print(f"  Shorrocks index: {mobility['shorrocks_index']:.3f}")

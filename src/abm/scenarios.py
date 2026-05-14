@@ -21,7 +21,7 @@ class ScenarioConfig:
     earned_income_max_credit: float
     earned_income_phaseout_start: float
     earned_income_phaseout_rate: float
-    transfer_policy: str = "lump_sum"
+    transfer_policy: str = "swedish_transfer"
     calibrate: bool = True
 
 
