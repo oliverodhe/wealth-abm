@@ -29,8 +29,13 @@ def plot_metric_over_time(
 ) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    for scenario, data in combined_results.groupby("scenario"):
-        ax.plot(data["year"], data[metric], label=scenario)
+    group_columns = ["scenario"]
+    if "return_preset" in combined_results.columns:
+        group_columns = ["return_preset", "scenario"]
+
+    for group_key, data in combined_results.groupby(group_columns):
+        label = " / ".join(group_key) if isinstance(group_key, tuple) else group_key
+        ax.plot(data["year"], data[metric], label=label)
 
     ax.set_xlabel("Year")
     ax.set_ylabel(ylabel)
