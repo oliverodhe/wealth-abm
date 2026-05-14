@@ -29,9 +29,13 @@ def plot_metric_over_time(
 ) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    group_columns = ["scenario"]
-    if "return_preset" in combined_results.columns:
-        group_columns = ["return_preset", "scenario"]
+    group_columns = [
+        column
+        for column in ("return_preset", "decomposition", "scenario")
+        if column in combined_results.columns
+    ]
+    if not group_columns:
+        group_columns = ["scenario"]
 
     for group_key, data in combined_results.groupby(group_columns):
         label = " / ".join(group_key) if isinstance(group_key, tuple) else group_key

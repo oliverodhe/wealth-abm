@@ -1,0 +1,16 @@
+decomposition,scenario,shorrocks_index,rank_correlation,top_20_persistence,bottom_40_to_top_40
+baseline,flat,0.734625,0.6685455516134555,0.7195,0.15925
+baseline,swedish_baseline_progressivity,0.727,0.6792391561563916,0.74,0.1515
+baseline,swedish_high_progressivity,0.71975,0.6869999436419993,0.7535,0.14625
+no_transfers,flat,0.691875,0.7222458809144587,0.7445,0.14425
+no_transfers,swedish_baseline_progressivity,0.6795,0.7442552330425525,0.7725,0.12675
+no_transfers,swedish_high_progressivity,0.664375,0.7618343721463438,0.791,0.1135
+homogeneous_returns,flat,0.6921250000000001,0.7142794585467945,0.7705,0.1495
+homogeneous_returns,swedish_baseline_progressivity,0.6839999999999999,0.7277112692091127,0.798,0.13875
+homogeneous_returns,swedish_high_progressivity,0.679125,0.7383043194270431,0.817,0.128
+homogeneous_saving_rates,flat,0.700875,0.7100094226640942,0.747,0.1405
+homogeneous_saving_rates,swedish_baseline_progressivity,0.6897500000000001,0.7336113867761139,0.7725,0.12125
+homogeneous_saving_rates,swedish_high_progressivity,0.677875,0.7519267586832676,0.786,0.10625
+no_capital_tax,flat,0.7477499999999999,0.6592400054324,0.6935,0.15825
+no_capital_tax,swedish_baseline_progressivity,0.742125,0.6671183142711831,0.706,0.15075
+no_capital_tax,swedish_high_progressivity,0.7401249999999999,0.6725618228456182,0.7145,0.147

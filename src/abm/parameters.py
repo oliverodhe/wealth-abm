@@ -34,3 +34,8 @@ class ModelParams:
     unemployment_probability: float = 0.03
     unemployment_replacement_rate: float = 0.70
     unemployment_benefit_cap: float = 260_000.0
+    transfer_policy: str = "swedish_transfer"
+    no_transfers: bool = False
+    homogeneous_returns: bool = False
+    homogeneous_saving_rates: bool = False
+    no_capital_tax: bool = False

@@ -31,6 +31,11 @@ class Simulation:
             if initial_agents is not None
             else initialise_agents(params)
         )
+        if self.params.homogeneous_saving_rates:
+            self.agents["saving_rate"] = np.full(
+                self.params.N,
+                float(self.agents["saving_rate"].mean()),
+            )
         self.initial_wealth = self.agents["wealth"].copy()
         self.labour_income = self._initial_labour_income()
 
@@ -54,23 +59,26 @@ class Simulation:
         potential_labour_income = self.labour_income
         labour_income = np.where(unemployed, 0.0, potential_labour_income)
         labour_tax = self._labour_tax(labour_income)
-        capital_tax = np.maximum(capital_income, 0.0) * self.params.capital_tax_rate
+        capital_tax_rate = 0.0 if self.params.no_capital_tax else self.params.capital_tax_rate
+        capital_tax = np.maximum(capital_income, 0.0) * capital_tax_rate
         after_tax_capital_income = capital_income - capital_tax
         total_tax = labour_tax + capital_tax
         labour_tax_revenue = float(labour_tax.sum())
         capital_tax_revenue = float(capital_tax.sum())
         total_revenue = float(total_tax.sum())
         income_after_labour_tax = labour_income - labour_tax
+        transfer_budget = self._transfer_budget(labour_tax_revenue)
+        transfer_settings = self._transfer_settings()
         transfers = total_transfers(
-            labour_tax_revenue,
+            transfer_budget,
             income_after_labour_tax,
             potential_labour_income,
             unemployed,
-            self.params.universal_transfer_share,
-            self.params.safety_floor,
-            self.params.safety_floor_replacement_rate,
-            self.params.unemployment_replacement_rate,
-            self.params.unemployment_benefit_cap,
+            transfer_settings["universal_share"],
+            transfer_settings["safety_floor"],
+            transfer_settings["safety_floor_replacement_rate"],
+            transfer_settings["unemployment_replacement_rate"],
+            transfer_settings["unemployment_benefit_cap"],
         )
 
         disposable_income = income_after_labour_tax + transfers.total
@@ -119,10 +127,50 @@ class Simulation:
         self.labour_income = self._initial_labour_income()
 
     def _draw_capital_returns(self) -> np.ndarray:
+        if self.params.homogeneous_returns:
+            return np.clip(
+                self.rng.normal(
+                    self.params.medium_return_mean,
+                    self.params.return_shock_sd,
+                    self.params.N,
+                ),
+                self.params.min_capital_return,
+                self.params.max_capital_return,
+            )
         return draw_capital_returns(self.agents["return_class"], self.params, self.rng)
 
     def _draw_unemployment(self) -> np.ndarray:
         return self.rng.random(self.params.N) < self.params.unemployment_probability
+
+    def _transfer_budget(self, labour_tax_revenue: float) -> float:
+        if self.params.no_transfers or self.params.transfer_policy == "no_transfers":
+            return 0.0
+        return labour_tax_revenue
+
+    def _transfer_settings(self) -> dict[str, float]:
+        if self.params.transfer_policy == "lump_sum_only":
+            return {
+                "universal_share": 1.0,
+                "safety_floor": self.params.safety_floor,
+                "safety_floor_replacement_rate": 0.0,
+                "unemployment_replacement_rate": 0.0,
+                "unemployment_benefit_cap": 0.0,
+            }
+        if self.params.transfer_policy == "universal_plus_safety_floor":
+            return {
+                "universal_share": self.params.universal_transfer_share,
+                "safety_floor": self.params.safety_floor,
+                "safety_floor_replacement_rate": self.params.safety_floor_replacement_rate,
+                "unemployment_replacement_rate": 0.0,
+                "unemployment_benefit_cap": 0.0,
+            }
+        return {
+            "universal_share": self.params.universal_transfer_share,
+            "safety_floor": self.params.safety_floor,
+            "safety_floor_replacement_rate": self.params.safety_floor_replacement_rate,
+            "unemployment_replacement_rate": self.params.unemployment_replacement_rate,
+            "unemployment_benefit_cap": self.params.unemployment_benefit_cap,
+        }
 
     def _return_diagnostics(
         self,
