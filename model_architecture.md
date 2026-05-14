@@ -1,713 +1,581 @@
-# Model Architecture: Swedish-Inspired Progressive Tax ABM
+# Model Architecture: Implemented Non-OLG Swedish-Inspired Tax-Transfer ABM
 
-The model is designed to answer the main research question:
+This document describes the current implemented model architecture. It differs from the original intended architecture in `model_architecture.md` by focusing on a clean, fixed-population, non-OLG baseline with Swedish-inspired labour taxation, transfer-policy decompositions, return-heterogeneity robustness checks, and mobility diagnostics.
 
-> **How does progressive labour-income taxation affect wealth inequality?**
+The current model is designed to answer:
 
-A secondary objective is to study how the same tax progressivity affects social mobility. A third objective is to calibrate or validate the model against Swedish historical stylised facts before using it for counterfactual experiments.
-
----
-
-## 1. Design philosophy
-
-The model should be realistic enough to represent the main channels of wealth accumulation, but simple enough to support clear interpretation.
-
-The core idea is:
-
-```text
-heterogeneous households
-+ labour income
-+ progressive labour-income taxation
-+ Swedish-style transfers
-+ savings and consumption
-+ capital returns
-+ wealth accumulation
-+ inequality and mobility measurement
-```
-
-The preferred identification logic is:
-
-```text
-same agents
-same income process
-same capital-return process
-same Swedish-style redistribution rules
-same approximate total tax revenue
-but different progressivity of labour-income taxation
-```
-
-This makes the interpretation cleaner. If wealth inequality changes, the change can be attributed mainly to the progressivity of labour-income taxation, not to differences in total revenue, tax base, or redistribution generosity.
+> How much does revenue-neutral labour-income tax progressivity affect wealth inequality and mobility when wealth accumulation is also driven by heterogeneous capital returns and redistribution design?
 
 ---
 
-## 2. What is kept from the included architecture
+## 1. Current Model Scope
 
-The included architecture contains several strong components that should be preserved:
+The implemented model is a discrete-time agent-based model with:
 
-1. A transparent wealth law of motion.
-2. Heterogeneous agents.
-3. Persistent labour-income differences.
-4. Heterogeneous capital returns.
-5. A consumption and saving rule.
-6. A distinction between labour income, capital income, wealth, and transfers.
-7. Inequality metrics such as Gini, top wealth shares, and Lorenz curves.
-8. Mobility metrics such as wealth-rank transition matrices.
-9. Revenue-neutral comparisons between flat and progressive labour taxation.
-10. Optional intergenerational mechanisms for later robustness checks.
+- fixed population
+- annual time steps
+- heterogeneous wealth, skill, saving rates, and return classes
+- persistent labour income
+- bounded heterogeneous capital returns
+- Swedish-inspired labour-income tax scenarios
+- Swedish-inspired transfer-policy variants
+- revenue-neutral first-year labour-tax calibration
+- wealth inequality, income inequality, return, transfer, and mobility diagnostics
 
----
+The model deliberately does **not** yet include:
 
-## 3. Model overview
-
-The model is a discrete-time agent-based model with a fixed population of heterogeneous households.
-
-Each period represents one year. Agents earn labour income, pay taxes, receive transfers, consume, save, earn capital returns, and update wealth. The government collects labour-income taxes and redistributes part of the revenue through a simplified Swedish-style transfer system.
-
-The model has no firms, banks, housing market, or general-equilibrium price clearing. Wages, capital returns, and demographic processes are exogenous. This keeps the model focused on the link between taxation and wealth accumulation.
+- age
+- OLG structure
+- pensions
+- inheritance
+- parent-child links
+- historical Swedish calibration
 
 ---
 
-## 4. Agent state
+## 2. Agent State
 
-Each agent represents a household or individual. The baseline state variables are:
+Each agent currently has:
 
-| Variable | Description |
+| State | Description |
 |---|---|
-| `age_i` | Age of agent. Used for life-cycle income, retirement, and optional inheritance. |
-| `wealth_i` | Net wealth. Main state variable and basis for inequality measurement. |
-| `skill_i` | Persistent labour-market ability or productivity. |
-| `income_i` | Annual pre-tax labour income. |
-| `saving_rate_i` | Agent-specific tendency to save out of disposable income. |
-| `return_type_i` | Persistent investment-return type. Used to generate heterogeneous capital returns. |
-| `capital_income_i` | Annual return on existing wealth. |
-| `tax_paid_i` | Labour-income tax paid in the current period. |
-| `transfer_i` | Transfers received in the current period. |
-| `cohort_i` | Optional generation/cohort identifier. Needed only if intergenerational mobility is included. |
-| `parent_id_i` | Optional link to parent. Needed only if inheritance or parent-child mobility is included. |
+| `wealth` | Net wealth, updated annually. |
+| `skill` | Permanent labour-market productivity component. |
+| `income_shock` | Persistent labour-income shock. |
+| `saving_rate` | Agent-specific saving propensity. |
+| `return_class` | Persistent capital-return class: low, medium, or high. |
 
-A minimal first implementation can omit `cohort_i` and `parent_id_i`. They should be added once the baseline model works.
+The model also stores:
 
----
+| State | Description |
+|---|---|
+| `initial_wealth` | Wealth at simulation start, used for mobility metrics. |
+| `labour_income` | Current pre-tax labour income generated from skill and shock. |
 
-## 5. Annual cycle
+Not yet implemented:
 
-Each simulated year follows this schedule:
-
-```text
-1. Age agents and handle retirement/death if demographic module is active.
-2. Generate labour income.
-3. Generate capital income from existing wealth.
-4. Apply labour-income tax.
-5. Apply capital-income tax if included.
-6. Redistribute revenue through Swedish-style transfer rules.
-7. Agents consume and save.
-8. Update wealth.
-9. Update productivity if public investment / mobility channel is active.
-10. Record inequality and mobility outcomes.
-```
-
-The first version can use a simpler schedule without deaths and births:
-
-```text
-1. Generate labour income.
-2. Generate capital income.
-3. Tax labour income.
-4. Redistribute transfers.
-5. Consume and save.
-6. Update wealth.
-7. Record outcomes.
-```
-
-The OLG version is more realistic, but the non-OLG version is easier to debug and should be implemented first.
+- `age`
+- `cohort`
+- `parent_id`
+- retirement state
+- unemployment history
+- pension income
 
 ---
 
-## 6. Wealth law of motion
+## 3. Initial Conditions
 
-The core wealth update is:
-
-$$
-w_{i,t+1} = w_{i,t} + s_{i,t} + (1 - \tau_k) r_{i,t} w_{i,t}
-$$
-
-where:
-
-- $w_{i,t}$ is wealth,
-- $s_{i,t}$ is saving from disposable income,
-- $r_{i,t}$ is the capital return,
-- $\tau_k$ is the capital-income tax rate.
-
-Saving is determined by disposable income after taxes and transfers:
-
-$$
-s_{i,t} = \max\left(0, \sigma_i \cdot (y^{disp}_{i,t} - c^{min}_{i,t})\right)
-$$
-
-where:
-
-$$
-y^{disp}_{i,t} = y_{i,t} - T(y_{i,t}) + Tr_{i,t}
-$$
-
-and:
-
-- $y_{i,t}$ is pre-tax labour income,
-- $T(y_{i,t})$ is labour-income tax,
-- $Tr_{i,t}$ is transfers,
-- $c^{min}_{i,t}$ is minimum consumption,
-- $\sigma_i$ is the saving propensity.
-
-This equation makes the main mechanism clear:
+Initial wealth is skewed:
 
 ```text
-Progressive labour-income taxation can reduce new saving flows,
-especially among high-income agents.
-
-But existing wealth can still grow through capital returns,
-which may limit the effect of labour-income taxation on wealth inequality.
+90% lognormal wealth
+10% Pareto top-tail wealth
+rescaled to target mean wealth
 ```
+
+Agents also receive:
+
+- normally distributed permanent skill
+- persistent initial income shock
+- heterogeneous saving rates
+- persistent return class
+
+The current initial distribution is synthetic. It is not calibrated to Swedish data.
 
 ---
 
-## 7. Initial wealth distribution
+## 4. Labour-Income Process
 
-The model should not start from equal wealth. Initial wealth should be drawn from a skewed distribution.
-
-Recommended baseline:
+Labour income is persistent:
 
 ```text
-bottom / middle of distribution: lognormal wealth
-top tail: Pareto wealth
+income_i,t = base_income * exp(skill_i + shock_i,t)
+shock_i,t = rho * shock_i,t-1 + epsilon_i,t
 ```
 
-Implementation idea:
+where `epsilon` is normally distributed.
 
-```python
-n_bottom = int(0.90 * N)
-n_top = N - n_bottom
-
-bottom_wealth = lognormal_distribution(n_bottom)
-top_wealth = pareto_distribution(n_top)
-
-wealth = concatenate(bottom_wealth, top_wealth)
-wealth = rescale_to_target_mean(wealth)
-```
-
-The distribution should be calibrated so that the model starts from a plausible Swedish or Sweden-like wealth distribution. Calibration targets can include:
+Unemployment is implemented as a simple annual shock:
 
 ```text
-wealth Gini
-top 10% wealth share
-top 1% wealth share
-Lorenz curve shape
-Pareto tail behaviour
-```
-
----
-
-## 8. Labour-income process
-
-Labour income should be persistent, not independently redrawn each year.
-
-Recommended specification:
-
-$$
-\log y_{i,t} = \phi(age_{i,t}) + skill_i + u_{i,t}
-$$
-
-with persistent shocks:
-
-$$
-u_{i,t} = \rho u_{i,t-1} + \epsilon_{i,t}, \qquad \epsilon_{i,t} \sim N(0, \sigma_\epsilon^2)
-$$
-
-where:
-
-- $skill_i$ is permanent earning ability,
-- $u_{i,t}$ is persistent income variation,
-- $\phi(age)$ is a hump-shaped age-income profile,
-- $\rho$ controls income persistence.
-
-A simple first version can use:
-
-```text
-income_i,t = base_income × exp(skill_i + shock_i,t)
-```
-
-A better version adds:
-
-```text
-age-income profile
-unemployment shocks
-retirement and pensions
-```
-
----
-
-## 9. Capital-return process
-
-Capital returns are essential because the thesis studies wealth inequality, not only income inequality.
-
-Recommended specification:
-
-$$
-r_{i,t} = \bar r + \eta_{type(i),t} + \epsilon^r_{i,t}
-$$
-
-where:
-
-- $\bar r$ is the average return,
-- $\eta_{type(i),t}$ depends on the agent's persistent return type,
-- $\epsilon^r_{i,t}$ is an idiosyncratic return shock.
-
-A realistic addition is to allow wealthier agents to have access to slightly higher or less volatile returns:
-
-```text
-higher wealth → better diversification / higher expected return
-```
-
-However, this should be added carefully. If the return advantage is too strong, the model may mechanically generate extreme inequality regardless of tax policy.
-
-Recommended first implementation:
-
-```text
-heterogeneous but bounded return types
-no direct wealth-dependent return premium at first
-```
-
-Recommended robustness check:
-
-```text
-activate wealth-dependent return premium
-compare whether progressive labour tax becomes less effective
-```
-
----
-
-## 10. Consumption and saving
-
-The model should include a simple behavioural saving rule rather than solving a full utility-maximisation problem.
-
-Recommended rule:
-
-```text
-minimum consumption is paid first
-remaining disposable income is partly saved
-saving rate increases weakly with income or wealth
-```
-
-Example:
-
-$$
-c_{i,t} = c^{min}_{i,t} + \alpha_i y^{disp}_{i,t}
-$$
-
-or equivalently:
-
-$$
-s_{i,t} = \sigma_i \max(y^{disp}_{i,t} - c^{min}_{i,t}, 0)
-$$
-
-where $\sigma_i$ may depend on the agent's income or wealth rank.
-
-This is important because progressive labour-income taxation affects wealth mainly through saving flows. If high-income agents save a larger share of income, then taxing high labour incomes can reduce wealth accumulation more than a flat tax with the same revenue.
-
----
-
-## 11. Swedish-inspired labour-income tax module
-
-The central policy lever is the progressivity of labour-income taxation.
-
-The model should support two tax specifications:
-
-## 11.1 Realistic Swedish-style bracket approximation
-
-This is preferred for the main Swedish model.
-
-```text
-municipal tax component:
-    approximately flat tax on labour income
-
-state tax component:
-    additional tax above a high-income threshold
-
-earned-income tax credit:
-    simplified reduction for labour income
-```
-
-A simplified formula:
-
-$$
-T(y_i) = \tau_m y_i + \tau_s \max(0, y_i - \bar y_s) - J(y_i)
-$$
-
-where:
-
-- $\tau_m$ is the municipal tax rate,
-- $\tau_s$ is the state tax rate above threshold,
-- $\bar y_s$ is the state-tax threshold,
-- $J(y_i)$ is a simplified earned-income tax credit.
-
-Progressivity can be varied by changing:
-
-```text
-state tax threshold
-state tax rate
-earned-income tax credit shape
-```
-
-## 11.2 Smooth HSV tax function
-
-The HSV function should be retained as an alternative because it makes progressivity easy to vary smoothly:
-
-$$
-T(y) = y - \lambda y^{1 - \tau_p}
-$$
-
-where:
-
-- $\tau_p$ controls progressivity,
-- $\lambda$ controls the average tax level.
-
-This is useful for clean comparative statics and robustness checks.
-
-## Recommendation
-
-Use the Swedish bracket approximation in the main results, and use the HSV function as a robustness check.
-
----
-
-## 12. Revenue neutrality
-
-The main experiments should be revenue-neutral.
-
-For each tax-progressivity scenario, choose the tax-level parameter so that total labour-income tax revenue is approximately equal across scenarios.
-
-```text
-flat tax revenue ≈ moderate progressivity revenue ≈ high progressivity revenue
-```
-
-This is crucial because otherwise the experiment confounds:
-
-```text
-progressivity effect
-with
-total revenue effect
-```
-
-Implementation:
-
-```python
-for each progressivity_setting:
-    find tax_level_parameter such that
-        total_tax_revenue ≈ target_revenue
-```
-
-For a bracket schedule, this can mean adjusting the municipal component or a scaling factor. For the HSV function, this means solving for `lambda` given the chosen `tau_p`.
-
----
-
-## 13. Swedish-style redistribution module
-
-The redistribution system should remain mostly fixed across progressivity scenarios.
-
-A simplified Swedish-style redistribution block can include:
-
-```text
-universal component
-social insurance component
-means-tested safety floor
-public investment / mobility component
-```
-
-## 13.1 Universal component
-
-A fixed lump-sum transfer or household allowance.
-
-Simplified version:
-
-```text
-universal_transfer_i = fixed amount
-```
-
-## 13.2 Social insurance component
-
-Agents hit by unemployment or income shocks receive partial replacement income.
-
-```text
+unemployed_i,t ~ Bernoulli(unemployment_probability)
 if unemployed:
-    benefit = min(replacement_rate × previous_income, benefit_cap)
+    taxable labour income = 0
 ```
 
-## 13.3 Means-tested safety floor
+Unemployed agents may receive replacement income depending on the transfer policy.
 
-Agents whose disposable resources fall below a minimum standard receive a top-up.
+Not yet implemented:
 
-```text
-social_assistance_i = max(0, minimum_standard_i - disposable_income_i)
-```
-
-## 13.4 Public investment / mobility channel
-
-A share of revenue can be used to increase future productivity, especially for low-income or low-wealth agents.
-
-```text
-public_investment_i,t → higher expected productivity_i,t+1
-```
-
-This channel should be optional in the first version. It is more relevant for social mobility than for the headline wealth-inequality result.
+- age-income profile
+- sectoral labour markets
+- endogenous unemployment
+- persistent unemployment spells
+- wage growth by cohort
 
 ---
 
-## 14. Experimental design
+## 5. Capital-Return Process
 
-Recommended main scenarios:
+Each agent belongs to a persistent return class:
 
-| Scenario | Labour-income tax | Redistribution | Revenue |
-|---|---|---|---|
-| A — Flat tax | Flat labour-income tax | Swedish-style transfers | Target revenue |
-| B — Swedish-style progressivity | Municipal + state tax approximation | Same transfers | Same target revenue |
-| C — High progressivity | Stronger state tax / lower threshold | Same transfers | Same target revenue |
-| D — Low progressivity | Weaker state tax / higher threshold | Same transfers | Same target revenue |
+| Class | Baseline mean |
+|---|---:|
+| Low | 0.02 |
+| Medium | 0.04 |
+| High | 0.06 |
 
-The primary comparison is:
-
-```text
-B - A
-```
-
-That is, Swedish-style progressive labour-income taxation versus a flat labour-income tax that raises the same revenue.
-
-The other comparisons are sensitivity checks:
+Annual return:
 
 ```text
-C - B: effect of stronger progressivity
-D - B: effect of weaker progressivity
+r_i,t = class_mean_i + normal_shock
 ```
 
----
+Returns are bounded:
 
-## 15. Optional decomposition experiments
+```text
+min_capital_return <= r_i,t <= max_capital_return
+```
 
-After the main results, the model can run decomposition experiments. These should not replace the main experiment.
+Capital returns do **not** depend directly on wealth.
 
-Possible decompositions:
+Robustness presets vary return-class means and return shock standard deviation:
 
-| Decomposition | Purpose |
+| Preset | Purpose |
 |---|---|
-| Remove transfers | Separates taxation from redistribution. |
-| Remove capital-income tax | Tests whether labour-income progressivity alone matters. |
-| Remove public investment channel | Tests whether mobility effects come from productivity changes. |
-| Remove heterogeneous capital returns | Tests whether capital returns weaken labour-tax effects. |
-| Remove inheritance | Tests whether intergenerational persistence matters. |
-
-These are useful because they explain why progressive labour-income taxation does or does not affect wealth inequality.
+| `low_return_heterogeneity` | Capital returns are relatively similar across agents. |
+| `baseline_return_heterogeneity` | Baseline class spread. |
+| `high_return_heterogeneity` | Wealth accumulation is more strongly driven by capital-return differences. |
 
 ---
 
-## 16. Historical calibration to Sweden
+## 6. Wealth Law Of Motion
 
-The model should be calibrated or validated against Swedish historical stylised facts before counterfactual experiments are interpreted.
-
-The goal is not to reproduce Sweden year by year. The goal is to match broad patterns such as:
+Each year:
 
 ```text
-wealth is more unequal than income
-wealth has a heavy upper tail
-top wealth shares are persistent
-income taxes and transfers reduce disposable-income inequality
-wealth inequality responds slowly to income-tax changes
-capital returns matter strongly for top wealth accumulation
+capital_income_i,t = wealth_i,t * r_i,t
+capital_tax_i,t = max(capital_income_i,t, 0) * capital_tax_rate
+after_tax_capital_income_i,t = capital_income_i,t - capital_tax_i,t
+
+disposable_income_i,t = labour_income_i,t - labour_tax_i,t + transfers_i,t
+saving_i,t = max(0, saving_rate_i * (disposable_income_i,t - min_consumption))
+
+wealth_i,t+1 = max(0, wealth_i,t + after_tax_capital_income_i,t + saving_i,t)
 ```
 
-Possible calibration targets:
+This keeps the main mechanism explicit:
 
-```text
-wealth Gini
-top 10% wealth share
-top 1% wealth share
-income Gini before and after taxes/transfers
-total tax revenue as share of income
-average labour-income tax burden
-capital-income share of total income
-```
-
-Recommended calibration strategy:
-
-```text
-1. Choose a historical Swedish calibration window.
-2. Initialise wealth and income distributions to match the start of the window.
-3. Tune income persistence, saving rates, and return heterogeneity.
-4. Check whether simulated inequality trends resemble Swedish stylised facts.
-5. Freeze calibrated parameters.
-6. Run counterfactual progressivity experiments.
-```
-
-This makes the model more credible without claiming full historical reconstruction.
+- labour taxation affects new saving flows
+- capital returns affect existing wealth
+- transfer design affects disposable income and saving capacity
 
 ---
 
-## 17. Outcome measurement
+## 7. Labour-Tax Systems
 
-The primary outcomes are wealth-inequality measures:
+The model supports:
 
-```text
-wealth Gini
-top 10% wealth share
-top 1% wealth share
-Lorenz curve
-Pareto tail index
-```
+| Tax system | Description |
+|---|---|
+| `flat` | Flat labour-income tax. |
+| `simple_progressive` | Earlier simple threshold tax, retained for compatibility. |
+| `swedish` | Municipal + state tax + earned-income credit approximation. |
 
-Secondary outcomes are social-mobility measures:
+The Swedish-style formula is:
 
 ```text
-wealth-quintile transition matrix
-Shorrocks mobility index
-rank-rank correlation over time
-probability of moving from bottom 40% to middle/top groups
-probability of remaining in top 20%
+T(y) = municipal_rate * y
+     + state_rate * max(0, y - state_threshold)
+     - earned_income_credit(y)
 ```
 
-If the OLG module is active, add:
+The earned-income credit:
 
-```text
-parent-child wealth-rank correlation
-intergenerational elasticity of wealth
-inheritance share of wealth
-```
-
-The main thesis figures should show:
-
-```text
-Gini over time by tax scenario
-top 10% wealth share over time by tax scenario
-Lorenz curves at selected years
-mobility transition matrices
-sensitivity to capital-return heterogeneity
-```
+- increases disposable income for low/middle earners
+- phases out for high earners
+- never exceeds pre-credit tax liability
 
 ---
 
-## 18. Implementation order
+## 8. Tax Scenarios
 
-The implementation should be staged.
+Current tax scenarios:
 
-## Stage 1 — Minimal working model
+| Scenario | Description |
+|---|---|
+| `flat` | Flat labour-income tax. |
+| `swedish_low_progressivity` | Higher threshold, lower state rate, smaller credit phaseout. |
+| `swedish_baseline_progressivity` | Baseline Swedish-style approximation. |
+| `swedish_high_progressivity` | Lower threshold, higher state rate, stronger credit phaseout. |
 
-```text
-N heterogeneous agents
-initial skewed wealth distribution
-labour income process
-capital returns
-saving rule
-flat vs progressive labour tax
-fixed lump-sum redistribution
-Gini and top-share outputs
-```
-
-Goal: test whether progressivity affects wealth inequality in the simplest Swedish-inspired setting.
-
-## Stage 2 — Swedish tax-transfer approximation
-
-```text
-municipal tax component
-state tax threshold
-simplified earned-income tax credit
-social insurance shock
-means-tested safety floor
-revenue-neutral calibration
-```
-
-Goal: make the model institutionally Swedish.
-
-## Stage 3 — Historical calibration
-
-```text
-calibrate initial wealth distribution
-calibrate income distribution
-calibrate return heterogeneity
-calibrate tax revenue / average tax burden
-validate against Swedish stylised facts
-```
-
-Goal: strengthen credibility of counterfactual results.
-
-## Stage 4 — Mobility and OLG extension
-
-```text
-age structure
-retirement and pensions
-death and inheritance
-offspring replacement
-parent-child rank correlations
-```
-
-Goal: add intergenerational social mobility if time allows.
-
-## Stage 5 — Robustness checks
-
-```text
-HSV tax function
-stronger/weaker capital-return heterogeneity
-with/without inheritance
-with/without public investment channel
-with/without capital-income tax
-```
-
-Goal: explain mechanisms and limitations.
+For Swedish scenarios, the municipal rate is calibrated so first-year labour-tax revenue matches the flat-tax target.
 
 ---
 
-## 19. Recommended baseline model for the thesis
+## 9. Revenue Neutrality
 
-The recommended final baseline is:
-
-```text
-Agent-based model with:
-    N = 5,000 households
-    annual time steps
-    skewed initial wealth distribution
-    persistent labour income
-    heterogeneous saving rates
-    heterogeneous capital returns
-    Swedish-style labour-income tax approximation
-    Swedish-style transfers
-    revenue-neutral progressivity scenarios
-    wealth inequality as primary outcome
-    mobility as secondary outcome
-```
-
-The main policy scenarios are:
+The model uses first-year labour-income revenue neutrality:
 
 ```text
-A. Flat labour-income tax
-B. Swedish-style progressive labour-income tax
-C. More progressive labour-income tax
-D. Less progressive labour-income tax
+target_revenue = flat_tax(first_year_labour_income).sum()
 ```
 
-All scenarios should use the same redistribution rules and approximately the same total tax revenue.
+For each Swedish-style tax scenario:
+
+```text
+calibrate municipal_rate
+such that Swedish tax revenue ~= target_revenue
+```
+
+Capital-tax revenue is recorded separately and is not used for revenue-neutral labour-tax calibration.
 
 ---
 
-## 20. What is genuinely new in this combined version
+## 10. Transfer System
 
-The contribution is not that the model contains many different fiscal systems. The contribution is that it isolates one specific mechanism in a realistic institutional setting:
+Transfers are funded from **labour-tax revenue only**.
+
+Capital-tax revenue is recorded separately and is not redistributed.
+
+Implemented transfer components:
+
+### 10.1 Universal Transfer
+
+Equal payment to all agents.
+
+### 10.2 Means-Tested Safety Floor
+
+If disposable income after labour tax falls below a threshold:
 
 ```text
-How much can progressive labour-income taxation affect wealth inequality
-when wealth accumulation is driven by both labour-income saving flows
-and capital returns on existing wealth?
+means_tested_transfer = replacement_rate * max(0, safety_floor - disposable_income_after_tax)
 ```
 
-The model combines:
+### 10.3 Unemployment Support
 
-1. A Swedish-inspired tax-transfer setting.
-2. A clean progressivity experiment with revenue-neutral comparison.
-3. Heterogeneous capital returns so that the wealth tail can emerge realistically.
-4. Historical calibration to Swedish stylised facts.
-5. Wealth inequality as the primary outcome and social mobility as a secondary outcome.
+If an agent receives an unemployment shock:
 
-This is a stronger and more focused design than the four-system architecture, while preserving the best technical parts of the literature-based model.
+```text
+unemployment_support = min(replacement_rate * previous_income, benefit_cap)
+```
+
+### 10.4 Budget Handling
+
+The transfer system is budget-balanced against labour-tax revenue.
+
+If targeted transfers exceed the targeted budget, they are scaled down. Remaining revenue is paid through the universal component.
+
+---
+
+## 11. Transfer Policies
+
+Current transfer-policy decompositions:
+
+| Policy | Description |
+|---|---|
+| `no_transfers` | No transfer spending. |
+| `lump_sum_only` | All labour-tax revenue redistributed equally. |
+| `universal_plus_safety_floor` | Universal transfer plus means-tested safety floor. |
+
+The default model also supports unemployment support through the broader Swedish transfer logic, but the transfer-policy decomposition isolates the three policies above.
+
+Policy invariants:
+
+- `no_transfers`: transfer spending share = 0, means-tested recipient share = 0
+- `lump_sum_only`: means-tested recipient share = 0
+- `universal_plus_safety_floor`: means-tested recipient share may be positive
+
+---
+
+## 12. Decomposition Toggles
+
+The model includes independent mechanism toggles:
+
+| Toggle | Effect |
+|---|---|
+| `no_transfers` | Removes all transfer spending. |
+| `homogeneous_returns` | Removes return-class differences. |
+| `homogeneous_saving_rates` | Gives all agents the same saving rate. |
+| `no_capital_tax` | Sets capital tax to zero. |
+
+These are used in decomposition experiments to identify mechanisms driving inequality and mobility.
+
+---
+
+## 13. Experiment Runners
+
+### 13.1 `scripts/run_scenarios.py`
+
+Runs:
+
+```text
+3 return presets x 4 tax scenarios = 12 runs
+```
+
+Outputs:
+
+- yearly CSVs
+- combined scenario comparison CSV
+- final summary CSV
+- mobility summary CSV
+- return heterogeneity summary CSV
+- inequality and Lorenz plots
+
+### 13.2 `scripts/run_decompositions.py`
+
+Runs mechanism decomposition toggles for:
+
+```text
+flat
+swedish_baseline_progressivity
+swedish_high_progressivity
+```
+
+Outputs:
+
+- `decomposition_comparison.csv`
+- `decomposition_final_summary.csv`
+- `decomposition_mobility_summary.csv`
+- `decomposition_summary.csv`
+- decomposition plots
+
+### 13.3 `scripts/run_transfer_policy_decompositions.py`
+
+Runs the full transfer-policy grid:
+
+```text
+3 return presets x 3 transfer policies x 4 tax scenarios = 36 runs
+```
+
+Each printed block has the format:
+
+```text
+{return_preset} / {transfer_policy} / {tax_scenario}
+```
+
+Outputs:
+
+- `transfer_policy_yearly_results.csv`
+- `transfer_policy_final_summary.csv`
+- `transfer_policy_mobility_summary.csv`
+- `decomposition_summary.csv`
+- `transfer_policy_decomposition_summary.csv`
+- transfer-policy comparison plots
+
+---
+
+## 14. Recorded Yearly Metrics
+
+Each yearly result includes:
+
+### Wealth Metrics
+
+- wealth Gini
+- top 10% wealth share
+- top 1% wealth share
+
+### Tax And Transfer Metrics
+
+- labour-tax revenue
+- capital-tax revenue
+- total tax revenue
+- total transfers
+- universal transfer spending
+- means-tested transfer spending
+- unemployment transfer spending
+- transfer spending share
+- means-tested recipient count
+- means-tested recipient share
+- unemployment rate
+
+### Income Metrics
+
+- pre-tax labour-income Gini
+- disposable-income Gini
+- capital-income Gini
+- capital income share of total income
+- average tax rate by income decile
+
+### Return Diagnostics
+
+- average realised returns by wealth decile
+- average realised returns by return class
+
+---
+
+## 15. Mobility Metrics
+
+The model computes:
+
+- wealth-quintile transition matrix
+- Shorrocks mobility index
+- initial-final wealth rank correlation
+- probability of remaining in top 20%
+- probability of moving from bottom 40% to top 40%
+
+Mobility is measured from initial wealth to final wealth within the fixed population.
+
+---
+
+## 16. Current Output Tables
+
+Important CSV outputs include:
+
+| File | Description |
+|---|---|
+| `scenario_comparison.csv` | Main scenario panel. |
+| `final_summary.csv` | Final-year scenario outcomes. |
+| `mobility_summary.csv` | Mobility outcomes. |
+| `return_heterogeneity_summary.csv` | Differences between flat and high progressivity by return preset. |
+| `decomposition_summary.csv` | Decomposition effects. |
+| `transfer_policy_final_summary.csv` | Full 36-run transfer-policy grid final outcomes. |
+| `transfer_policy_mobility_summary.csv` | Mobility outcomes for transfer-policy grid. |
+| `transfer_policy_decomposition_summary.csv` | Differences relative to flat by transfer policy and return preset. |
+
+---
+
+## 17. Current Plots
+
+The model saves plots for:
+
+- wealth Gini over time
+- pre-tax labour-income Gini over time
+- disposable-income Gini over time
+- capital income share over time
+- top 10% wealth share over time
+- top 1% wealth share over time
+- final Lorenz curves
+- decomposition comparisons
+- transfer-policy comparisons:
+  - wealth Gini by transfer policy
+  - disposable-income Gini by transfer policy
+  - top 1% share by transfer policy
+
+---
+
+## 18. What This Version Can Answer
+
+The implemented architecture can study:
+
+1. Whether Swedish-style labour-tax progressivity compresses disposable income.
+2. Whether that disposable-income compression translates into lower wealth inequality.
+3. Whether capital-return heterogeneity weakens the wealth effect of labour-tax progressivity.
+4. Whether redistribution design matters more than labour-tax progressivity.
+5. Whether top wealth persistence changes under different tax-transfer designs.
+6. Whether mobility responds differently from inequality.
+
+---
+
+## 19. Differences From The Intended Final Architecture
+
+The current model is richer than the original Stage 1/2 prototype, but it is still not the full intended model.
+
+### 19.1 Missing OLG And Demographics
+
+Not implemented:
+
+- age structure
+- retirement
+- pensions
+- death
+- offspring replacement
+- cohort identifiers
+
+### 19.2 Missing Inheritance
+
+Not implemented:
+
+- parent-child links
+- bequests
+- inheritance taxation
+- intergenerational wealth persistence
+- parent-child rank correlations
+
+### 19.3 No Historical Calibration
+
+The model is not calibrated to Swedish historical data.
+
+Missing calibration targets include:
+
+- Swedish wealth Gini
+- top 10% and top 1% wealth shares
+- income distribution
+- tax revenue as share of income
+- average tax burden
+- capital-income share
+- Pareto tail behaviour
+
+### 19.4 Labour Market Still Simple
+
+Implemented unemployment is a simple iid annual shock.
+
+Not implemented:
+
+- persistent unemployment spells
+- social-insurance eligibility histories
+- wage growth
+- sectoral shocks
+- age-income profiles
+
+### 19.5 Transfer System Is Stylised
+
+The transfer system is Swedish-inspired but not institutionally calibrated.
+
+Not implemented:
+
+- housing allowances
+- child benefits
+- sickness insurance
+- detailed unemployment insurance rules
+- municipal variation
+- household composition
+
+### 19.6 No Public Investment Channel
+
+The original intended architecture included a possible public investment or mobility channel:
+
+```text
+public investment -> future productivity growth
+```
+
+This is not implemented.
+
+### 19.7 No HSV Tax Robustness Function
+
+The intended architecture suggested retaining the HSV smooth tax function as a robustness check.
+
+Current model has:
+
+- flat tax
+- simple progressive tax
+- Swedish-style tax
+
+But no HSV tax function.
+
+### 19.8 No Wealth-Dependent Return Premium
+
+Capital returns are heterogeneous by persistent class, but do not directly depend on wealth.
+
+The intended architecture suggested a possible robustness check:
+
+```text
+higher wealth -> better diversification / higher expected return
+```
+
+This is not implemented.
+
+---
+
+## 20. Recommended Next Steps
+
+The next development steps should be:
+
+1. Clean output naming so main scenario, return-robustness, mechanism decomposition, and transfer-policy decomposition outputs do not overwrite each other.
+2. Add Pareto tail index and income top-share diagnostics.
+3. Add a calibration module with synthetic targets first, then Swedish data targets.
+4. Add richer transfer-policy parameters without adding full OLG.
+5. Add HSV tax function as a robustness experiment.
+6. Add optional wealth-dependent return premium as a robustness experiment.
+7. Only after the non-OLG model is stable, add age, pensions, inheritance, and OLG dynamics.
 
