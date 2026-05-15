@@ -51,7 +51,7 @@ def test_homogeneous_saving_rates_are_equalized() -> None:
 def test_decomposition_comparison_file_contains_expected_columns() -> None:
     root = Path(__file__).resolve().parents[1]
     subprocess.run(
-        [sys.executable, "scripts/run_decompositions.py"],
+        [sys.executable, "scripts/run_decompositions.py", "--seed-list", "0,1,2"],
         cwd=root,
         check=True,
         capture_output=True,
@@ -62,6 +62,6 @@ def test_decomposition_comparison_file_contains_expected_columns() -> None:
 
     assert {"decomposition", "scenario"}.issubset(comparison.columns)
     assert {
-        "wealth_gini_difference_vs_baseline",
-        "top_20_persistence_difference_vs_baseline",
+        "wealth_gini_difference_vs_baseline_mean",
+        "top_20_persistence_difference_vs_baseline_mean",
     }.issubset(summary.columns)

@@ -52,7 +52,7 @@ def test_high_return_heterogeneity_has_larger_realised_return_dispersion() -> No
 def test_scenario_comparison_file_contains_return_preset_column() -> None:
     root = Path(__file__).resolve().parents[1]
     subprocess.run(
-        [sys.executable, "scripts/run_scenarios.py"],
+        [sys.executable, "scripts/run_scenarios.py", "--seed-list", "0,1,2"],
         cwd=root,
         check=True,
         capture_output=True,
@@ -60,3 +60,17 @@ def test_scenario_comparison_file_contains_return_preset_column() -> None:
     )
     comparison = pd.read_csv(root / "outputs" / "csv" / "scenario_comparison.csv")
     assert "return_preset" in comparison.columns
+    assert "wealth_gini_mean" in comparison.columns
+
+
+def test_scenario_runner_seed_sweep_is_reproducible() -> None:
+    root = Path(__file__).resolve().parents[1]
+    command = [sys.executable, "scripts/run_scenarios.py", "--seed-list", "0,1,2"]
+    subprocess.run(command, cwd=root, check=True, capture_output=True, text=True)
+    first = pd.read_csv(root / "outputs" / "csv" / "final_summary.csv")
+    subprocess.run(command, cwd=root, check=True, capture_output=True, text=True)
+    second = pd.read_csv(root / "outputs" / "csv" / "final_summary.csv")
+
+    assert {"final_gini_mean", "final_gini_std", "final_gini_ci_low", "final_gini_ci_high"}.issubset(first.columns)
+    assert (first["final_gini_std"] > 0.0).any()
+    pd.testing.assert_frame_equal(first, second)

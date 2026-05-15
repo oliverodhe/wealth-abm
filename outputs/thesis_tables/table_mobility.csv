@@ -1,5 +1,5 @@
 tax_scenario,shorrocks_index,top_20_persistence,bottom_40_to_top_40,rank_correlation,Scenario,scenario_order
-flat,0.73325,0.7195,0.15975,0.6688587886605879,Flat tax,0
-swedish_low_progressivity,0.7306250000000001,0.7255,0.15775,0.6723773196277731,Low progressivity,1
-swedish_baseline_progressivity,0.72375,0.741,0.1515,0.6795300877233008,Baseline progressivity,2
-swedish_high_progressivity,0.7204999999999999,0.754,0.147,0.687265699388657,High progressivity,3
+flat,0.7280000000000001,0.7208333333333332,0.1575833333333333,0.6713725664697257,Flat tax,0
+swedish_low_progressivity,0.7280000000000001,0.7281666666666666,0.1549166666666666,0.6745283479532835,Low progressivity,1
+swedish_baseline_progressivity,0.7241249999999999,0.7425,0.15025,0.6814597642305976,Baseline progressivity,2
+swedish_high_progressivity,0.7196666666666666,0.7535,0.1441666666666666,0.6891644935716449,High progressivity,3

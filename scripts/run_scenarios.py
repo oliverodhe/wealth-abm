@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 import numpy as np
 import pandas as pd
@@ -16,6 +18,7 @@ from abm.plotting import plot_final_lorenz_curves, plot_metric_over_time
 from abm.return_presets import RETURN_PRESETS, apply_return_preset
 from abm.scenarios import SCENARIOS, CalibratedScenario, calibrate_scenarios
 from abm.simulation import Simulation
+from runner_utils import add_seed_arguments, aggregate_with_ci, print_aggregated_metric_block, seed_values
 
 CSV_DIR = ROOT / "outputs" / "csv"
 FIGURE_DIR = ROOT / "outputs" / "figures"
@@ -29,7 +32,6 @@ def save_scenario_results(
     scenario_results = results.copy()
     scenario_results.insert(0, "scenario", name)
     scenario_results.insert(0, "return_preset", return_preset)
-    scenario_results.to_csv(CSV_DIR / f"{return_preset}_{name}_yearly_results.csv", index=False)
     return scenario_results
 
 
@@ -95,12 +97,20 @@ def final_summary_row(
 def robustness_summary_rows(final_summary: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, float | str]] = []
 
-    for return_preset, data in final_summary.groupby("return_preset"):
+    group_columns = ["return_preset"]
+    if "seed" in final_summary.columns:
+        group_columns = ["seed", "return_preset"]
+
+    for group_key, data in final_summary.groupby(group_columns):
+        if isinstance(group_key, tuple):
+            seed, return_preset = group_key
+        else:
+            seed = None
+            return_preset = group_key
         flat = data.loc[data["scenario"] == "flat"].iloc[0]
         high = data.loc[data["scenario"] == "swedish_high_progressivity"].iloc[0]
-        rows.append(
-            {
-                "return_preset": return_preset,
+        row = {
+            "return_preset": return_preset,
                 "wealth_gini_difference_flat_minus_high": (
                     flat["final_gini"] - high["final_gini"]
                 ),
@@ -121,81 +131,89 @@ def robustness_summary_rows(final_summary: pd.DataFrame) -> pd.DataFrame:
                     flat["top_20_persistence"] - high["top_20_persistence"]
                 ),
             }
-        )
+        if seed is not None:
+            row["seed"] = seed
+        rows.append(row)
 
     return pd.DataFrame(rows)
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    add_seed_arguments(parser)
+    args = parser.parse_args()
+    seeds = seed_values(args.seeds, args.seed_list)
+
     CSV_DIR.mkdir(parents=True, exist_ok=True)
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
-
-    base_params = ModelParams()
-    initial_agents = initialise_agents(base_params)
 
     yearly_results: list[pd.DataFrame] = []
     final_summary_rows: list[dict[str, float | str]] = []
     mobility_rows: list[dict[str, float | str]] = []
     final_wealth_by_scenario: dict[str, np.ndarray] = {}
 
-    for preset_name, preset in RETURN_PRESETS.items():
-        params = apply_return_preset(base_params, preset)
-        calibrated_scenarios = calibrate_scenarios(params, initial_agents, SCENARIOS)
+    for seed in seeds:
+        base_params = ModelParams(seed=seed)
+        initial_agents = initialise_agents(base_params)
 
-        for name, calibrated in calibrated_scenarios.items():
-            sim = Simulation(
-                calibrated.params,
-                tax_system=calibrated.config.tax_system,
-                initial_agents=initial_agents,
-            )
-            results = sim.run()
-            yearly_results.append(save_scenario_results(preset_name, name, results))
-            final_wealth_by_scenario[f"{preset_name} / {name}"] = sim.agents["wealth"]
+        for preset_name, preset in RETURN_PRESETS.items():
+            params = apply_return_preset(base_params, preset)
+            calibrated_scenarios = calibrate_scenarios(params, initial_agents, SCENARIOS)
 
-            mobility = mobility_metrics(
-                preset_name,
-                name,
-                sim.initial_wealth,
-                sim.agents["wealth"],
-            )
-            mobility_rows.append(mobility)
-            final_summary_rows.append(
-                final_summary_row(preset_name, name, calibrated, results, mobility)
-            )
+            for name, calibrated in calibrated_scenarios.items():
+                sim = Simulation(
+                    calibrated.params,
+                    tax_system=calibrated.config.tax_system,
+                    initial_agents=initial_agents,
+                )
+                results = sim.run()
+                scenario_results = results.copy()
+                scenario_results.insert(0, "seed", seed)
+                yearly_results.append(save_scenario_results(preset_name, name, scenario_results))
+                if seed == seeds[-1]:
+                    final_wealth_by_scenario[f"{preset_name} / {name}"] = sim.agents["wealth"]
 
-            final = results.iloc[-1]
-            revenue_difference = (
-                calibrated.first_year_labour_revenue - calibrated.target_labour_revenue
-            )
-            print(f"{preset_name} / {name}")
-            print(f"  Calibrated municipal/base rate: {calibrated.calibrated_rate:.6f}")
-            print(f"  First-year labour-tax revenue difference: {revenue_difference:.6f}")
-            print(f"  Final Gini: {final['wealth_gini']:.3f}")
-            print(f"  Final pre-tax labour-income Gini: {final['pre_tax_labour_income_gini']:.3f}")
-            print(f"  Final disposable-income Gini: {final['disposable_income_gini']:.3f}")
-            print(f"  Final capital-income share: {final['capital_income_share']:.3f}")
-            print(f"  Final transfer spending share: {final['transfer_spending_share']:.3f}")
-            print(f"  Final means-tested recipient share: {final['means_tested_recipient_share']:.3f}")
-            print(f"  Final unemployment rate: {final['unemployment_rate']:.3f}")
-            print(f"  Final top 10% share: {final['top_10_share']:.3f}")
-            print(f"  Final top 1% share: {final['top_1_share']:.3f}")
-            print(f"  Shorrocks index: {mobility['shorrocks_index']:.3f}")
-            print(f"  Top 20% persistence: {mobility['top_20_persistence']:.3f}")
-            print_transition_matrix(
-                f"{preset_name} / {name}",
-                sim.initial_wealth,
-                sim.agents["wealth"],
-            )
+                mobility = mobility_metrics(
+                    preset_name,
+                    name,
+                    sim.initial_wealth,
+                    sim.agents["wealth"],
+                )
+                mobility["seed"] = seed
+                mobility_rows.append(mobility)
+                final_row = final_summary_row(preset_name, name, calibrated, results, mobility)
+                final_row["seed"] = seed
+                final_summary_rows.append(final_row)
 
     combined_results = pd.concat(yearly_results, ignore_index=True)
     final_summary = pd.DataFrame(final_summary_rows)
     mobility_summary = pd.DataFrame(mobility_rows)
     robustness_summary = robustness_summary_rows(final_summary)
 
-    combined_results.to_csv(CSV_DIR / "scenario_comparison.csv", index=False)
-    final_summary.to_csv(CSV_DIR / "final_summary.csv", index=False)
-    mobility_summary.to_csv(CSV_DIR / "mobility_summary.csv", index=False)
-    robustness_summary.to_csv(CSV_DIR / "return_heterogeneity_summary.csv", index=False)
+    combined_results.to_csv(CSV_DIR / "scenario_comparison_per_seed.csv", index=False)
+    final_summary.to_csv(CSV_DIR / "final_summary_per_seed.csv", index=False)
+    mobility_summary.to_csv(CSV_DIR / "mobility_summary_per_seed.csv", index=False)
+    robustness_summary.to_csv(CSV_DIR / "return_heterogeneity_summary_per_seed.csv", index=False)
+
+    combined_results_agg = aggregate_with_ci(combined_results, ["return_preset", "scenario", "year"])
+    final_summary_agg = aggregate_with_ci(
+        final_summary,
+        ["return_preset", "scenario", "tax_system", "transfer_policy"],
+    )
+    mobility_summary_agg = aggregate_with_ci(mobility_summary, ["return_preset", "scenario"])
+    robustness_summary_agg = aggregate_with_ci(robustness_summary, ["return_preset"])
+
+    combined_results_agg.to_csv(CSV_DIR / "scenario_comparison.csv", index=False)
+    final_summary_agg.to_csv(CSV_DIR / "final_summary.csv", index=False)
+    mobility_summary_agg.to_csv(CSV_DIR / "mobility_summary.csv", index=False)
+    robustness_summary_agg.to_csv(CSV_DIR / "return_heterogeneity_summary.csv", index=False)
+
+    for _, row in final_summary_agg.iterrows():
+        print_aggregated_metric_block(
+            f"{row['return_preset']} / {row['scenario']} (S={int(row['seed_count'])})",
+            row,
+            ["final_gini", "final_disposable_income_gini", "final_top_1_share", "shorrocks_index"],
+        )
 
     plot_metric_over_time(
         combined_results,

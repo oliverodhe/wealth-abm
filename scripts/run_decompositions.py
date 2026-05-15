@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 import numpy as np
 import pandas as pd
@@ -16,6 +18,7 @@ from abm.parameters import ModelParams
 from abm.plotting import plot_metric_over_time
 from abm.scenarios import SCENARIOS, CalibratedScenario, calibrate_scenarios
 from abm.simulation import Simulation
+from runner_utils import add_seed_arguments, aggregate_with_ci, print_aggregated_metric_block, seed_values
 
 CSV_DIR = ROOT / "outputs" / "csv"
 FIGURE_DIR = ROOT / "outputs" / "figures"
@@ -79,11 +82,19 @@ def final_summary_row(
 def decomposition_summary(final_summary: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, float | str]] = []
 
-    for scenario, data in final_summary.groupby("scenario"):
+    group_columns = ["scenario"]
+    if "seed" in final_summary.columns:
+        group_columns = ["seed", "scenario"]
+
+    for group_key, data in final_summary.groupby(group_columns):
+        if isinstance(group_key, tuple):
+            seed, scenario = group_key
+        else:
+            seed = None
+            scenario = group_key
         baseline = data.loc[data["decomposition"] == "baseline"].iloc[0]
         for _, row in data.iterrows():
-            rows.append(
-                {
+            out = {
                     "decomposition": row["decomposition"],
                     "scenario": scenario,
                     "wealth_gini_difference_vs_baseline": (
@@ -106,75 +117,95 @@ def decomposition_summary(final_summary: pd.DataFrame) -> pd.DataFrame:
                         row["top_20_persistence"] - baseline["top_20_persistence"]
                     ),
                 }
-            )
+            if seed is not None:
+                out["seed"] = seed
+            rows.append(out)
 
     return pd.DataFrame(rows)
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    add_seed_arguments(parser)
+    args = parser.parse_args()
+    seeds = seed_values(args.seeds, args.seed_list)
+
     CSV_DIR.mkdir(parents=True, exist_ok=True)
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
-
-    base_params = ModelParams()
-    initial_agents = initialise_agents(base_params)
 
     yearly_results: list[pd.DataFrame] = []
     final_rows: list[dict[str, float | str]] = []
     mobility_rows: list[dict[str, float | str]] = []
 
-    for decomposition_name, decomposition in DECOMPOSITIONS.items():
-        params = apply_decomposition(base_params, decomposition)
-        calibrated_scenarios = calibrate_scenarios(
-            params,
-            initial_agents,
-            DECOMPOSITION_SCENARIOS,
-        )
+    for seed in seeds:
+        base_params = ModelParams(seed=seed)
+        initial_agents = initialise_agents(base_params)
 
-        for scenario_name, calibrated in calibrated_scenarios.items():
-            sim = Simulation(
-                calibrated.params,
-                tax_system=calibrated.config.tax_system,
-                initial_agents=initial_agents,
+        for decomposition_name, decomposition in DECOMPOSITIONS.items():
+            params = apply_decomposition(base_params, decomposition)
+            calibrated_scenarios = calibrate_scenarios(
+                params,
+                initial_agents,
+                DECOMPOSITION_SCENARIOS,
             )
-            results = sim.run()
-            scenario_results = results.copy()
-            scenario_results.insert(0, "scenario", scenario_name)
-            scenario_results.insert(0, "decomposition", decomposition_name)
-            yearly_results.append(scenario_results)
 
-            mobility = mobility_metrics(
-                decomposition_name,
-                scenario_name,
-                sim.initial_wealth,
-                sim.agents["wealth"],
-            )
-            mobility_rows.append(mobility)
-            final_rows.append(
-                final_summary_row(
+            for scenario_name, calibrated in calibrated_scenarios.items():
+                sim = Simulation(
+                    calibrated.params,
+                    tax_system=calibrated.config.tax_system,
+                    initial_agents=initial_agents,
+                )
+                results = sim.run()
+                scenario_results = results.copy()
+                scenario_results.insert(0, "seed", seed)
+                scenario_results.insert(0, "scenario", scenario_name)
+                scenario_results.insert(0, "decomposition", decomposition_name)
+                yearly_results.append(scenario_results)
+
+                mobility = mobility_metrics(
                     decomposition_name,
                     scenario_name,
-                    calibrated,
-                    results,
-                    mobility,
+                    sim.initial_wealth,
+                    sim.agents["wealth"],
                 )
-            )
-
-            final = results.iloc[-1]
-            print(f"{decomposition_name} / {scenario_name}")
-            print(f"  Final Gini: {final['wealth_gini']:.3f}")
-            print(f"  Final top 10% share: {final['top_10_share']:.3f}")
-            print(f"  Shorrocks index: {mobility['shorrocks_index']:.3f}")
-            print(f"  Top 20% persistence: {mobility['top_20_persistence']:.3f}")
+                mobility["seed"] = seed
+                mobility_rows.append(mobility)
+                final_row = final_summary_row(
+                        decomposition_name,
+                        scenario_name,
+                        calibrated,
+                        results,
+                        mobility,
+                    )
+                final_row["seed"] = seed
+                final_rows.append(final_row)
 
     comparison = pd.concat(yearly_results, ignore_index=True)
     final_summary = pd.DataFrame(final_rows)
     mobility_summary = pd.DataFrame(mobility_rows)
     decomposition_effects = decomposition_summary(final_summary)
 
-    comparison.to_csv(CSV_DIR / "decomposition_comparison.csv", index=False)
-    final_summary.to_csv(CSV_DIR / "decomposition_final_summary.csv", index=False)
-    mobility_summary.to_csv(CSV_DIR / "decomposition_mobility_summary.csv", index=False)
-    decomposition_effects.to_csv(CSV_DIR / "decomposition_summary.csv", index=False)
+    comparison.to_csv(CSV_DIR / "decomposition_comparison_per_seed.csv", index=False)
+    final_summary.to_csv(CSV_DIR / "decomposition_final_summary_per_seed.csv", index=False)
+    mobility_summary.to_csv(CSV_DIR / "decomposition_mobility_summary_per_seed.csv", index=False)
+    decomposition_effects.to_csv(CSV_DIR / "decomposition_summary_per_seed.csv", index=False)
+
+    comparison_agg = aggregate_with_ci(comparison, ["decomposition", "scenario", "year"])
+    final_summary_agg = aggregate_with_ci(final_summary, ["decomposition", "scenario", "tax_system"])
+    mobility_summary_agg = aggregate_with_ci(mobility_summary, ["decomposition", "scenario"])
+    decomposition_effects_agg = aggregate_with_ci(decomposition_effects, ["decomposition", "scenario"])
+
+    comparison_agg.to_csv(CSV_DIR / "decomposition_comparison.csv", index=False)
+    final_summary_agg.to_csv(CSV_DIR / "decomposition_final_summary.csv", index=False)
+    mobility_summary_agg.to_csv(CSV_DIR / "decomposition_mobility_summary.csv", index=False)
+    decomposition_effects_agg.to_csv(CSV_DIR / "decomposition_summary.csv", index=False)
+
+    for _, row in final_summary_agg.iterrows():
+        print_aggregated_metric_block(
+            f"{row['decomposition']} / {row['scenario']} (S={int(row['seed_count'])})",
+            row,
+            ["final_gini", "final_top_10_share", "shorrocks_index", "top_20_persistence"],
+        )
 
     plot_metric_over_time(
         comparison,

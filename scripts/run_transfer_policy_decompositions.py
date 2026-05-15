@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import argparse
 from pathlib import Path
 import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 MPL_CONFIG_DIR = Path(tempfile.gettempdir()) / "abm_matplotlib"
 MPL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -29,6 +31,7 @@ from abm.return_presets import RETURN_PRESETS, apply_return_preset
 from abm.scenarios import SCENARIOS, CalibratedScenario, calibrate_scenarios
 from abm.simulation import Simulation
 from abm.transfer_policies import TRANSFER_POLICIES, apply_transfer_policy
+from runner_utils import add_seed_arguments, aggregate_with_ci, print_aggregated_metric_block, seed_values
 
 CSV_DIR = ROOT / "outputs" / "csv"
 FIGURE_DIR = ROOT / "outputs" / "figures"
@@ -92,13 +95,20 @@ def final_summary_row(
 def relative_to_flat_summary(final_summary: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, float | str]] = []
 
-    for group_key, data in final_summary.groupby(["return_preset", "transfer_policy"]):
-        return_preset, transfer_policy = group_key
+    group_columns = ["return_preset", "transfer_policy"]
+    if "seed" in final_summary.columns:
+        group_columns = ["seed", "return_preset", "transfer_policy"]
+
+    for group_key, data in final_summary.groupby(group_columns):
+        if len(group_columns) == 3:
+            seed, return_preset, transfer_policy = group_key
+        else:
+            seed = None
+            return_preset, transfer_policy = group_key
         flat = data.loc[data["tax_scenario"] == "flat"].iloc[0]
 
         for _, row in data.iterrows():
-            rows.append(
-                {
+            out = {
                     "transfer_policy": transfer_policy,
                     "return_preset": return_preset,
                     "tax_scenario": row["tax_scenario"],
@@ -122,7 +132,9 @@ def relative_to_flat_summary(final_summary: pd.DataFrame) -> pd.DataFrame:
                         row["top_20_persistence"] - flat["top_20_persistence"]
                     ),
                 }
-            )
+            if seed is not None:
+                out["seed"] = seed
+            rows.append(out)
 
     return pd.DataFrame(rows)
 
@@ -150,7 +162,8 @@ def plot_final_metric_by_transfer_policy(
                     (subset["transfer_policy"] == transfer_policy)
                     & (subset["tax_scenario"] == tax_scenario)
                 ]
-                values.append(float(row.iloc[0][metric]))
+                value_column = f"{metric}_mean" if f"{metric}_mean" in row.columns else metric
+                values.append(float(row.iloc[0][value_column]))
             ax.plot(transfer_policies, values, marker="o", label=tax_scenario)
 
         ax.set_title(return_preset)
@@ -166,98 +179,118 @@ def plot_final_metric_by_transfer_policy(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    add_seed_arguments(parser)
+    args = parser.parse_args()
+    seeds = seed_values(args.seeds, args.seed_list)
+
     CSV_DIR.mkdir(parents=True, exist_ok=True)
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
-
-    base_params = ModelParams()
-    initial_agents = initialise_agents(base_params)
 
     yearly_results: list[pd.DataFrame] = []
     final_rows: list[dict[str, float | str]] = []
     mobility_rows: list[dict[str, float | str]] = []
 
-    for return_preset_name, return_preset in RETURN_PRESETS.items():
-        for transfer_policy_name, transfer_policy in TRANSFER_POLICIES.items():
-            params = apply_transfer_policy(
-                apply_return_preset(base_params, return_preset),
-                transfer_policy,
-            )
-            calibrated_scenarios = calibrate_scenarios(params, initial_agents, SCENARIOS)
+    for seed in seeds:
+        base_params = ModelParams(seed=seed)
+        initial_agents = initialise_agents(base_params)
 
-            for scenario_name, calibrated in calibrated_scenarios.items():
-                sim = Simulation(
-                    calibrated.params,
-                    tax_system=calibrated.config.tax_system,
-                    initial_agents=initial_agents,
+        for return_preset_name, return_preset in RETURN_PRESETS.items():
+            for transfer_policy_name, transfer_policy in TRANSFER_POLICIES.items():
+                params = apply_transfer_policy(
+                    apply_return_preset(base_params, return_preset),
+                    transfer_policy,
                 )
-                results = sim.run()
-                scenario_results = results.copy()
-                scenario_results.insert(0, "tax_scenario", scenario_name)
-                scenario_results.insert(0, "transfer_policy", transfer_policy_name)
-                scenario_results.insert(0, "return_preset", return_preset_name)
-                yearly_results.append(scenario_results)
-                scenario_results.to_csv(
-                    CSV_DIR
-                    / f"{transfer_policy_name}_{return_preset_name}_{scenario_name}_yearly_results.csv",
-                    index=False,
-                )
+                calibrated_scenarios = calibrate_scenarios(params, initial_agents, SCENARIOS)
 
-                mobility = mobility_metrics(
-                    return_preset_name,
-                    transfer_policy_name,
-                    scenario_name,
-                    sim.initial_wealth,
-                    sim.agents["wealth"],
-                )
-                mobility_rows.append(mobility)
-                final_rows.append(
-                    final_summary_row(
+                for scenario_name, calibrated in calibrated_scenarios.items():
+                    sim = Simulation(
+                        calibrated.params,
+                        tax_system=calibrated.config.tax_system,
+                        initial_agents=initial_agents,
+                    )
+                    results = sim.run()
+                    scenario_results = results.copy()
+                    scenario_results.insert(0, "seed", seed)
+                    scenario_results.insert(0, "tax_scenario", scenario_name)
+                    scenario_results.insert(0, "transfer_policy", transfer_policy_name)
+                    scenario_results.insert(0, "return_preset", return_preset_name)
+                    yearly_results.append(scenario_results)
+
+                    mobility = mobility_metrics(
                         return_preset_name,
                         transfer_policy_name,
                         scenario_name,
-                        calibrated,
-                        results,
-                        mobility,
+                        sim.initial_wealth,
+                        sim.agents["wealth"],
                     )
-                )
-
-                final = results.iloc[-1]
-                print(f"{return_preset_name} / {transfer_policy_name} / {scenario_name}")
-                print(f"  Return preset: {return_preset_name}")
-                print(f"  Transfer policy: {transfer_policy_name}")
-                print(f"  Tax scenario: {scenario_name}")
-                print(f"  Final Gini: {final['wealth_gini']:.3f}")
-                print(f"  Final disposable-income Gini: {final['disposable_income_gini']:.3f}")
-                print(f"  Transfer spending share: {final['transfer_spending_share']:.3f}")
-                print(f"  Means-tested recipient share: {final['means_tested_recipient_share']:.3f}")
-                print(f"  Final top 1% share: {final['top_1_share']:.3f}")
-                print(f"  Shorrocks index: {mobility['shorrocks_index']:.3f}")
+                    mobility["seed"] = seed
+                    mobility_rows.append(mobility)
+                    final_row = final_summary_row(
+                            return_preset_name,
+                            transfer_policy_name,
+                            scenario_name,
+                            calibrated,
+                            results,
+                            mobility,
+                        )
+                    final_row["seed"] = seed
+                    final_rows.append(final_row)
 
     comparison = pd.concat(yearly_results, ignore_index=True)
     final_summary = pd.DataFrame(final_rows)
     mobility_summary = pd.DataFrame(mobility_rows)
     decomposition_summary = relative_to_flat_summary(final_summary)
 
-    comparison.to_csv(CSV_DIR / "transfer_policy_yearly_results.csv", index=False)
-    final_summary.to_csv(CSV_DIR / "transfer_policy_final_summary.csv", index=False)
-    mobility_summary.to_csv(CSV_DIR / "transfer_policy_mobility_summary.csv", index=False)
-    decomposition_summary.to_csv(CSV_DIR / "decomposition_summary.csv", index=False)
-    decomposition_summary.to_csv(CSV_DIR / "transfer_policy_decomposition_summary.csv", index=False)
+    comparison.to_csv(CSV_DIR / "transfer_policy_yearly_results_per_seed.csv", index=False)
+    final_summary.to_csv(CSV_DIR / "transfer_policy_final_summary_per_seed.csv", index=False)
+    mobility_summary.to_csv(CSV_DIR / "transfer_policy_mobility_summary_per_seed.csv", index=False)
+    decomposition_summary.to_csv(CSV_DIR / "transfer_policy_decomposition_summary_per_seed.csv", index=False)
+
+    comparison_agg = aggregate_with_ci(
+        comparison,
+        ["return_preset", "transfer_policy", "tax_scenario", "year"],
+    )
+    final_summary_agg = aggregate_with_ci(
+        final_summary,
+        ["return_preset", "transfer_policy", "tax_scenario", "tax_system"],
+    )
+    mobility_summary_agg = aggregate_with_ci(
+        mobility_summary,
+        ["return_preset", "transfer_policy", "tax_scenario"],
+    )
+    decomposition_summary_agg = aggregate_with_ci(
+        decomposition_summary,
+        ["return_preset", "transfer_policy", "tax_scenario"],
+    )
+
+    comparison_agg.to_csv(CSV_DIR / "transfer_policy_yearly_results.csv", index=False)
+    final_summary_agg.to_csv(CSV_DIR / "transfer_policy_final_summary.csv", index=False)
+    mobility_summary_agg.to_csv(CSV_DIR / "transfer_policy_mobility_summary.csv", index=False)
+    decomposition_summary_agg.to_csv(CSV_DIR / "decomposition_summary.csv", index=False)
+    decomposition_summary_agg.to_csv(CSV_DIR / "transfer_policy_decomposition_summary.csv", index=False)
+
+    for _, row in final_summary_agg.iterrows():
+        print_aggregated_metric_block(
+            f"{row['return_preset']} / {row['transfer_policy']} / {row['tax_scenario']} (S={int(row['seed_count'])})",
+            row,
+            ["final_gini", "final_disposable_income_gini", "final_top_1_share", "shorrocks_index"],
+        )
 
     plot_final_metric_by_transfer_policy(
-        final_summary,
+        final_summary_agg,
         "final_gini",
         "Final wealth Gini",
         FIGURE_DIR / "transfer_policy_wealth_gini.png",
     )
     plot_final_metric_by_transfer_policy(
-        final_summary,
+        final_summary_agg,
         "final_disposable_income_gini",
         "Final disposable-income Gini",
         FIGURE_DIR / "transfer_policy_disposable_income_gini.png",
     )
     plot_final_metric_by_transfer_policy(
-        final_summary,
+        final_summary_agg,
         "final_top_1_share",
         "Final top 1% wealth share",
         FIGURE_DIR / "transfer_policy_top_1_share.png",

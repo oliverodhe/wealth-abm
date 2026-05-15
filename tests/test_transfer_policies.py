@@ -32,7 +32,7 @@ def test_lump_sum_only_has_no_targeted_transfer_spending() -> None:
 def test_transfer_policy_decomposition_outputs_have_expected_columns() -> None:
     root = Path(__file__).resolve().parents[1]
     subprocess.run(
-        [sys.executable, "scripts/run_transfer_policy_decompositions.py"],
+        [sys.executable, "scripts/run_transfer_policy_decompositions.py", "--seed-list", "0,1,2"],
         cwd=root,
         check=True,
         capture_output=True,
@@ -44,19 +44,19 @@ def test_transfer_policy_decomposition_outputs_have_expected_columns() -> None:
 
     assert {"return_preset", "transfer_policy", "tax_scenario"}.issubset(yearly.columns)
     assert {
-        "wealth_gini_difference_relative_to_flat",
-        "disposable_income_gini_difference_relative_to_flat",
-        "top_10_difference_relative_to_flat",
-        "top_1_difference_relative_to_flat",
-        "shorrocks_difference_relative_to_flat",
-        "top_20_persistence_difference_relative_to_flat",
+        "wealth_gini_difference_relative_to_flat_mean",
+        "disposable_income_gini_difference_relative_to_flat_mean",
+        "top_10_difference_relative_to_flat_mean",
+        "top_1_difference_relative_to_flat_mean",
+        "shorrocks_difference_relative_to_flat_mean",
+        "top_20_persistence_difference_relative_to_flat_mean",
     }.issubset(summary.columns)
 
 
 def test_transfer_policy_summary_contains_all_36_combinations() -> None:
     root = Path(__file__).resolve().parents[1]
     subprocess.run(
-        [sys.executable, "scripts/run_transfer_policy_decompositions.py"],
+        [sys.executable, "scripts/run_transfer_policy_decompositions.py", "--seed-list", "0,1,2"],
         cwd=root,
         check=True,
         capture_output=True,
@@ -72,7 +72,7 @@ def test_transfer_policy_summary_contains_all_36_combinations() -> None:
 def test_transfer_policy_invariants_in_summary() -> None:
     root = Path(__file__).resolve().parents[1]
     subprocess.run(
-        [sys.executable, "scripts/run_transfer_policy_decompositions.py"],
+        [sys.executable, "scripts/run_transfer_policy_decompositions.py", "--seed-list", "0,1,2"],
         cwd=root,
         check=True,
         capture_output=True,
@@ -83,6 +83,6 @@ def test_transfer_policy_invariants_in_summary() -> None:
     no_transfers = final_summary[final_summary["transfer_policy"] == "no_transfers"]
     lump_sum = final_summary[final_summary["transfer_policy"] == "lump_sum_only"]
 
-    assert np.allclose(no_transfers["final_transfer_spending_share"], 0.0)
-    assert np.allclose(no_transfers["final_means_tested_recipient_share"], 0.0)
-    assert np.allclose(lump_sum["final_means_tested_recipient_share"], 0.0)
+    assert np.allclose(no_transfers["final_transfer_spending_share_mean"], 0.0)
+    assert np.allclose(no_transfers["final_means_tested_recipient_share_mean"], 0.0)
+    assert np.allclose(lump_sum["final_means_tested_recipient_share_mean"], 0.0)
